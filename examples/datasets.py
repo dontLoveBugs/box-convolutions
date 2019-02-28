@@ -2,13 +2,13 @@ import torch
 import torch.utils.data
 import torchvision
 
+import cv2
 import numpy as np
-import imgaug
 
 class Cityscapes(torch.utils.data.Dataset):
     def __init__(
         self, root='/media/hpc4_Raid/e_burkov/Datasets/Cityscapes/',
-        split='train', size=(1024, 512), augment=False):
+        split='train', size=(1024, 512), augmented=False):
 
         super().__init__()
 
@@ -45,14 +45,39 @@ class Cityscapes(torch.utils.data.Dataset):
         self.class_weights = np.concatenate(([0], 1.0 / np.log(class_probs + 1.1)))
         self.class_weights = torch.tensor(self.class_weights, dtype=torch.float32)
 
-        self.augment = augment
-        if augment:
-            self.augmenter = imgaug.augmenters.Sequential([
-                imgaug.augmenters.Fliplr(0.5),
-                imgaug.augmenters.Affine(
-                    scale=(0.88, 1.12), rotate=(-7.5, 7.5), mode='symmetric'),
-            ])
+        self.augmented = augmented
 
+    @staticmethod
+    def augment(image, labels):
+        """
+            image: np.uint8, H x W x 3
+            labels: np.uint8, H x W
+        """
+        flip = bool(np.random.randint(2))
+        maybe_flip_matrix = np.eye(3)
+        if flip:
+            maybe_flip_matrix[0,0] = -1
+            maybe_flip_matrix[0,2] = labels.shape[1]
+        
+        angle = (np.random.rand() * 2 - 1) * 7.5
+        scale_factor = (np.random.rand() * 2 - 1) * 0.12 + 1.0
+        image_center = (labels.shape[1] / 2, labels.shape[0] / 2)
+        rotation_matrix = np.eye(3)
+        rotation_matrix[:2] = cv2.getRotationMatrix2D(image_center, angle, scale_factor)
+        
+        transformation_matrix = (maybe_flip_matrix @ rotation_matrix)[:2]
+        
+        image_size = (labels.shape[1], labels.shape[0])
+
+        image = cv2.warpAffine(
+            image, transformation_matrix, image_size,
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        labels = cv2.warpAffine(
+            labels, transformation_matrix, image_size,
+            flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+
+        return image, labels
+        
     def __len__(self):
         return len(self.cityscapes)
 
@@ -60,12 +85,8 @@ class Cityscapes(torch.utils.data.Dataset):
         image, labels = map(np.array, self.cityscapes[idx])
         labels[labels == 255] = 0
 
-        if self.augment:
-            labels = imgaug.SegmentationMapOnImage(labels, image.shape[:2], self.n_classes+1)
-
-            augmenter = self.augmenter.to_deterministic()
-            image = augmenter.augment_image(image)
-            labels = augmenter.augment_segmentation_maps(labels).get_arr_int()
+        if self.augmented:
+            image, labels = self.augment(image, labels)
 
         image = image.transpose((2, 0, 1)).astype(np.float32)
         image -= self.mean.reshape(3, 1, 1)
@@ -75,11 +96,11 @@ class Cityscapes(torch.utils.data.Dataset):
 
 
 if __name__ == '__main__':
-    dataset = Cityscapes('/home/shrubb/Datasets/Cityscapes', augment=True)
+    dataset = Cityscapes('/home/shrubb/Datasets/Cityscapes', augmented=True)
     print(len(dataset))
 
-    import cv2
-    for im, la in dataset:
-        cv2.imshow('im', im)
-        cv2.imshow('la', la * 3000)
-        cv2.waitKey(0)
+    # import cv2
+    # for im, la in dataset:
+    #     cv2.imshow('im', im.numpy())
+    #     cv2.imshow('la', la.numpy())
+    #     cv2.waitKey(0)

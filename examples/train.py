@@ -78,7 +78,7 @@ def main():
     from datasets import Cityscapes
     
     train_dataset = Cityscapes(
-        args.data, split='train', size=(256, 128), augment=False)
+        args.data, split='train', size=(512, 256), augmented=True)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -86,7 +86,7 @@ def main():
     train_loader.iter = iter(train_loader)
 
     val_dataset = Cityscapes(
-        args.data, split='val', size=(256, 128), augment=False)
+        args.data, split='val', size=(512, 256), augmented=False)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
@@ -177,14 +177,11 @@ def train(train_loader, model, criterion, optimizer, epoch, board_writer):
 
         # measure data loading time
         data_time.update(time.time() - end)
-
         input = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
-
         # compute output
         output = model(input)
         loss = criterion(output, target)
-
         # compute gradient and do SGD step
         global_iteration = epoch * total_batches + i
         adjust_learning_rate(optimizer, epoch, i, total_batches)
@@ -194,7 +191,6 @@ def train(train_loader, model, criterion, optimizer, epoch, board_writer):
 
         # measure elapsed time
         batch_time.update(time.time() - end)
-        end = time.time()
 
         with torch.no_grad():
             if i % 80 == 0:
@@ -331,7 +327,7 @@ def accuracy(output, target):
         target = target.view(-1)
         confusion_matrix = torch.bincount(target*(n_classes+1) + output, minlength=(n_classes+1)**2)
         confusion_matrix = confusion_matrix.view(n_classes+1, n_classes+1)[1:, 1:].cpu()
-        print(confusion_matrix)
+
         class_categories = [
             [0, 1],                   # flat
             [2, 3, 4],                # construction
