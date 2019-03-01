@@ -62,8 +62,6 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
-parser.add_argument('--gpu', default=None, type=int,
-                    help='GPU id to use.')
 
 best_classIoU = 0
 
@@ -78,7 +76,7 @@ def main():
     from datasets import Cityscapes
     
     train_dataset = Cityscapes(
-        args.data, split='train', size=(512, 256), augmented=True)
+        args.data, split='train', size=(1024, 512), augmented=True)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -86,7 +84,7 @@ def main():
     train_loader.iter = iter(train_loader)
 
     val_dataset = Cityscapes(
-        args.data, split='val', size=(512, 256), augmented=False)
+        args.data, split='val', size=(1024, 512), augmented=False)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
@@ -100,8 +98,7 @@ def main():
             return torch.nn.functional.log_softmax(heatmap_raw, dim=1)
 
     model = ModelWithLogSoftmax(n_classes=19).cuda()
-
-    # model = torch.nn.DataParallel(model).cuda()
+    model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.NLLLoss(weight=train_dataset.class_weights).cuda()
@@ -156,7 +153,7 @@ def main():
             'state_dict': model.state_dict(),
             'best_classIoU': best_classIoU,
             'optimizer' : optimizer.state_dict(),
-        }, is_best, os.path.join('runs', args.run_name, ))
+        }, is_best, os.path.join('runs', args.run_name, 'model.pth'))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, board_writer):
@@ -193,7 +190,7 @@ def train(train_loader, model, criterion, optimizer, epoch, board_writer):
         batch_time.update(time.time() - end)
 
         with torch.no_grad():
-            if i % 80 == 0:
+            if i % 100 == 0:
                 # measure accuracy and record loss
                 classIoU, categIoU = accuracy(output, target)
 
@@ -223,6 +220,8 @@ def train(train_loader, model, criterion, optimizer, epoch, board_writer):
                 board_writer.add_scalars('Online accuracies',
                     {'Class IoU': classIoU_meter.val,
                      'Category IoU': categIoU_meter.val}, global_iteration)
+
+        end = time.time()
 
     return classIoU_meter.avg, categIoU_meter.avg, loss_meter.avg
 
@@ -311,7 +310,8 @@ def adjust_learning_rate(optimizer, epoch, epoch_iteration=None, iters_per_epoch
     if args.lr_test:
         lr = epoch * 3e-2 / args.epochs
 
-    lr = args.lr * (0.2 ** (epoch // 100))
+    step_epochs = torch.tensor([150, 250, 350, 430, 485])
+    lr = args.lr * (0.35 ** (epoch > step_epochs).sum().item())
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
