@@ -42,6 +42,10 @@ parser.add_argument('--optimizer', default='Adam', type=str, metavar='OPT',
                     help='optimizer type (default: Adam)')
 parser.add_argument('--lr', '--learning-rate', default=None, type=float, # 0.1
                     metavar='LR', help='initial learning rate')
+parser.add_argument('--lr-decay', default=0.35, type=float,
+                    help='See --decay-steps')
+parser.add_argument('--decay-steps', default='', type=str,
+                    help='Epoch numbers at which to multiply LR by --lr-decay')
 parser.add_argument('--momentum', default=None, type=float, metavar='M', # 0.9
                     help='momentum')
 parser.add_argument('--nesterov', default=None, type=bool, # True
@@ -51,8 +55,8 @@ parser.add_argument('--weight-decay', '--wd', default=None, type=float, # 1e-4
 
 parser.add_argument('--run-name', default=time.ctime(time.time())[4:-8], type=str,
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
+parser.add_argument('--resume', action='store_true',
+                    help='resume from latest checkpoint')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 
@@ -110,17 +114,18 @@ def main():
 
     # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
+        checkpoint_path = os.path.join('runs', args.run_name, 'model.pth')
+        if os.path.isfile(checkpoint_path):
+            print("=> loading checkpoint '{}'".format(checkpoint_path))
+            checkpoint = torch.load(checkpoint_path)
             args.start_epoch = checkpoint['epoch']
             best_classIoU = checkpoint['best_classIoU']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+                  .format(checkpoint_path, checkpoint['epoch']))
         else:
-            raise "=> no checkpoint found at '{}'".format(args.resume)
+            raise "=> no checkpoint found at '{}'".format(checkpoint_path)
 
     torch.backends.cudnn.benchmark = True
 
@@ -150,7 +155,7 @@ def main():
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
-            'state_dict': model.state_dict(),
+            'state_dict': model.module.state_dict(),
             'best_classIoU': best_classIoU,
             'optimizer' : optimizer.state_dict(),
         }, is_best, os.path.join('runs', args.run_name, 'model.pth'))
@@ -310,8 +315,8 @@ def adjust_learning_rate(optimizer, epoch, epoch_iteration=None, iters_per_epoch
     if args.lr_test:
         lr = epoch * 3e-2 / args.epochs
 
-    step_epochs = torch.tensor([150, 250, 350, 430, 485])
-    lr = args.lr * (0.35 ** (epoch > step_epochs).sum().item())
+    step_epochs = torch.tensor(list(map(int, args.decay_steps.split(','))))
+    lr = args.lr * (args.lr_decay ** (epoch > step_epochs).sum().item())
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
