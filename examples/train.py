@@ -136,6 +136,8 @@ def main():
         return
 
     for epoch in range(args.start_epoch, args.epochs):
+        print('Epoch', epoch+1)
+
         val_loader.iter = iter(val_loader)
         # train for one epoch
         train_metrics = train(train_loader, model, criterion, optimizer, epoch, board_writer)
@@ -234,11 +236,12 @@ def train(train_loader, model, criterion, optimizer, epoch, board_writer):
 def validate(val_loader, model, criterion):
     batch_time = AverageMeter()
     loss_meter = AverageMeter()
-    classIoU_meter = AverageMeter()
-    categIoU_meter = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
+
+    n_classes = criterion.weight.numel()-1
+    confusion_matrix = torch.zeros((n_classes, n_classes), dtype=torch.long)
 
     with torch.no_grad():
         end = time.time()
@@ -250,17 +253,26 @@ def validate(val_loader, model, criterion):
             output = model(input)
             loss = criterion(output, target)
 
-            # measure accuracy and record loss
-            classIoU, categIoU = accuracy(output, target)
+            # record loss
             loss_meter.update(loss.item(), input.size(0))
-            classIoU_meter.update(classIoU, target.numel())
-            categIoU_meter.update(categIoU, target.numel())
+
+            # update confusion matrix to compute IoU
+            output = output.max(1)[1].view(-1)
+            target = target.view(-1)
+
+            confusion_matrix_update = \
+                torch.bincount(target*(n_classes+1) + output, minlength=(n_classes+1)**2)
+            confusion_matrix += confusion_matrix_update.view(n_classes+1, n_classes+1)[1:,1:].cpu()
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-    return classIoU_meter.avg, categIoU_meter.avg, loss_meter.avg
+    classIoU, categoryIoU = compute_IoU(confusion_matrix)
+
+    print('Class IoU:', classIoU)
+    print('Category IoU:', categoryIoU)
+    return classIoU, categoryIoU, loss_meter.avg
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth'):
@@ -322,17 +334,8 @@ def adjust_learning_rate(optimizer, epoch, epoch_iteration=None, iters_per_epoch
         param_group['lr'] = lr
 
 
-def accuracy(output, target):
-    # output: B x Cl+1 x H x W
-    # target: B        x H x W
+def compute_IoU(confusion_matrix):
     with torch.no_grad():
-        n_classes = output.shape[1] - 1
-
-        output = output.max(1)[1].view(-1)
-        target = target.view(-1)
-        confusion_matrix = torch.bincount(target*(n_classes+1) + output, minlength=(n_classes+1)**2)
-        confusion_matrix = confusion_matrix.view(n_classes+1, n_classes+1)[1:, 1:].cpu()
-
         class_categories = [
             [0, 1],                   # flat
             [2, 3, 4],                # construction
